@@ -3,11 +3,12 @@ Fit a quadratic to the top or bottom outline of a red object in each image
 of a folder.
 
 Usage:
-    python fit_quadratic.py                # uses the settings below
-    python fit_quadratic.py top
-    python fit_quadratic.py bottom
+    python fit_quadratic.py                       # asks "top or bottom?"
+    python fit_quadratic.py bottom                # no prompt
+    python fit_quadratic.py /path/IMG.HEIC top    # file or folder, any order
 
-Requires: opencv-python, numpy   (pip install opencv-python numpy)
+Requires: opencv-python, numpy, pillow, pillow-heif
+    pip install opencv-python numpy pillow pillow-heif
 """
 
 import sys
@@ -15,10 +16,14 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from PIL import Image, ImageOps
+from pillow_heif import register_heif_opener
+
+register_heif_opener()  # lets Pillow open .heic/.heif files
 
 # ----------------------------- settings ------------------------------------
-INPUT_PATH = "/Users/ellanestingen/Downloads/ShankarLab/2026_pics/IMG_9018.jpeg"  # a file OR a folder
-EDGE = "top"          # "top" or "bottom" (can be overridden on the command line)
+INPUT_PATH = "/Users/ellanestingen/Downloads/ShankarLab/CurvatureImages/IMG_9241.HEIC"  # a file OR a folder
+EDGE = "bottom"          # "top", "bottom", or None to be asked each run (command line overrides)
 OUTPUT_SUBDIR = "fits"  # annotated images are saved in INPUT_PATH/OUTPUT_SUBDIR
 
 # HSV thresholds for "red" (OpenCV hue range is 0-179; red wraps around 0).
@@ -29,8 +34,20 @@ H_HIGH_MIN = 170
 S_MIN = 120
 V_MIN = 100
 
-EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
+EXTS = {".heic", ".heif", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
 # ---------------------------------------------------------------------------
+
+
+def load_image(path):
+    """Read any supported image (including HEIC) as an OpenCV BGR array."""
+    try:
+        pil = Image.open(path)
+        pil = ImageOps.exif_transpose(pil)  # apply the phone's rotation flag
+        rgb = np.array(pil.convert("RGB"))
+    except Exception as e:
+        print(f"{Path(path).name}: {e}")
+        return None
+    return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
 
 def red_mask(img_bgr):
@@ -66,7 +83,7 @@ def outline_points(mask, edge):
 
 
 def process(path, edge, out_dir):
-    img = cv2.imread(str(path))
+    img = load_image(path)
     if img is None:
         print(f"{path.name}: could not read image, skipping")
         return
@@ -108,15 +125,15 @@ def process(path, edge, out_dir):
 
 def main():
     # Optional command-line args, in any order: "top"/"bottom" and/or a path
-    edge = EDGE.lower()
+    edge = EDGE.lower() if EDGE else None
     target = INPUT_PATH
     for arg in sys.argv[1:]:
         if arg.lower() in ("top", "bottom"):
             edge = arg.lower()
         else:
             target = arg
-    if edge not in ("top", "bottom"):
-        sys.exit('EDGE must be "top" or "bottom".')
+    while edge not in ("top", "bottom"):
+        edge = input("Fit the top or bottom outline? [top/bottom]: ").strip().lower()
 
     target = Path(target).expanduser()
     if target.is_file():
