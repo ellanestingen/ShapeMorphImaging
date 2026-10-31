@@ -21,7 +21,9 @@ How the clicking works (for precision):
     Pick two marks FAR APART (e.g. the 10 mm and 80 mm marks): the further apart, the
     smaller the relative error from your click accuracy.
 
-Requires: opencv-python (not the -headless build), numpy, pillow, pillow-heif
+Keep this file in the same folder as fit_quadratic.py (it reuses its photo loader).
+Requires: opencv-python (the regular build, NOT -headless: it needs to open a window),
+          numpy, pillow, pillow-heif
     python3 -m pip install opencv-python numpy pillow pillow-heif
 """
 
@@ -33,11 +35,8 @@ import sys
 from pathlib import Path
 
 import cv2
-import numpy as np
-from PIL import Image, ImageOps
-from pillow_heif import register_heif_opener
 
-register_heif_opener()  # lets Pillow open .heic/.heif files
+from fit_quadratic import load_image, read_exif
 
 DISPLAY_MAX = 900      # longest side (px) of the overview window
 ZOOM_HALF = 100        # close-up shows a (2*ZOOM_HALF)^2 px full-resolution patch...
@@ -45,25 +44,6 @@ ZOOM_FACTOR = 5        # ...magnified this many times
 
 
 # ----------------------------------------------------------------------------
-def load_image(path):
-    """Read any supported image (incl. HEIC), honouring the phone's rotation flag.
-    Returns (BGR array, EXIF dict of a few camera fields)."""
-    pil = Image.open(path)
-    exif_info = {}
-    try:
-        ex = pil.getexif()
-        sub = ex.get_ifd(0x8769)  # Exif sub-IFD
-        for tag, name in [(41989, "focal_length_35mm"), (41988, "digital_zoom_ratio"),
-                          (37386, "focal_length_mm")]:
-            if tag in sub:
-                exif_info[name] = float(sub[tag])
-    except Exception:
-        pass
-    pil = ImageOps.exif_transpose(pil)
-    rgb = np.array(pil.convert("RGB"))
-    return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), exif_info
-
-
 def pick_point(img, label):
     """Two-stage click: coarse on the overview, then fine on a magnified patch.
     Returns (x, y) in full-resolution pixel coordinates, or None if the user quits."""
@@ -150,12 +130,6 @@ def compute_scale(p1, p2, distance_mm):
     return distance_mm / pix, pix
 
 
-def load_scale(path):
-    """Helper other scripts can import:  mm_per_px = load_scale('scale.json')['mm_per_px']"""
-    with open(path) as f:
-        return json.load(f)
-
-
 # ----------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Calibrate pixels -> mm from a ruler photo.")
@@ -170,7 +144,10 @@ def main():
     if not path.is_file():
         sys.exit(f"File not found: {path}")
 
-    img, exif_info = load_image(path)
+    try:
+        img = load_image(path)
+    except Exception as exc:
+        sys.exit(f"Could not read {path.name}: {exc}")
     h, w = img.shape[:2]
     print(f"Loaded {path.name}: {w} x {h} px (after applying phone rotation)")
 
@@ -223,7 +200,7 @@ def main():
         "point2": list(p2),
         "image_file": path.name,
         "image_size": [w, h],
-        "exif": exif_info,
+        "exif": read_exif(path),
         "created": datetime.datetime.now().isoformat(timespec="seconds"),
         "note": "Valid only for photos taken with the same camera, zoom and distance "
                 "to the object plane as the calibration photo.",
